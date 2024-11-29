@@ -15,6 +15,7 @@ function sis = modelo_sistema(t,x,u,I,C,Lm)
     sis = [dx1;dx2];
 end
 
+
 % Definir la función de eventos
 function [value,isterminal,direction] = myEventsFcn(t,x,umbral_angulo)
     value = x(1) - umbral_angulo; % Detectar cuando x(1) - umbral_angulo = 0
@@ -26,19 +27,19 @@ end
 tspan = [0 10];
 
 % Parámetros del sistema
-I = 0.0576;
-C = -0.098;
+I = 0.0167;
+C = -0.1326;
 Lm = 0.35;
 u = 0; % Entrada constante
 
 % Vector de ángulos en grados
-angulos_grados = [0, 30, 60]; % Aquí puedes definir los ángulos que desees en grados
+angulos_grados = [0, 30, 45]; % Aquí puedes definir los ángulos que desees en grados
 
 % Convertir los ángulos a radianes
 angulos_radianes = angulos_grados * (pi / 180);
 
 % Ángulo objetivo a alcanzar (puedes cambiar este valor para realizar diferentes pruebas)
-angulo_objetivo = -61;  % Especificar el ángulo en grados
+angulo_objetivo = -54.5;  % Especificar el ángulo en grados
 umbral_angulo = angulo_objetivo * (pi / 180);  % Convertir a radianes
 
 % Colores para las gráficas
@@ -83,3 +84,5 @@ ylabel('Posición angular (°)');
 legend show;
 
 hold off;
+
+

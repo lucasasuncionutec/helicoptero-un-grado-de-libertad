@@ -1,15 +1,20 @@
 #include <Servo.h>
 
+// Definiciones para pines
+#define ESC_PIN 10  // Pin para controlar el ESC
+#define RELAY_PIN 4 // Pin para el relé que controla la alimentación del ESC
+
 Servo esc;
 
 int velocidad_actual = 1000;
 
 void setup() {
   Serial.begin(9600);
-  esc.attach(10);
+  pinMode(RELAY_PIN, OUTPUT); 
+  esc.attach(ESC_PIN);
   esc.writeMicroseconds(0);
-  
   Serial.println("Ingrese un valor de microsegundos entre 1000 y 2000:");
+  digitalWrite(RELAY_PIN, HIGH); // Mantiene la alimentacion del ESC encendida
 }
 
 void loop() {
@@ -21,7 +26,6 @@ void loop() {
       Serial.print("Señal ajustada a: ");
       Serial.print(velocidad_actual);
       Serial.println(" microsegundos");
-
     } else {
       Serial.println("Por favor ingrese un valor entre 1000 y 2000 microsegundos.");
     }
@@ -39,7 +43,5 @@ void escribirVelocidadEnESC(int velocidad) {
     }
     Serial.println(velocidad_actual);
     esc.writeMicroseconds(velocidad_actual);
-    //delay(0);
   }
-
 }
