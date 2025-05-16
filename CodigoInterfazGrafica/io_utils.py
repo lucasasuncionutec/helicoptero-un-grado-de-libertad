@@ -16,9 +16,14 @@ class SerialComm:
         self.running = False
 
     def start(self):
+        if self.running:
+            print("[Advertencia] El hilo de adquisición ya está corriendo.")
+            return  # evita lanzar otro hilo
+
         self.running = True
         target = self._simulate_data if self.simulate else self._read_real
         threading.Thread(target=target, daemon=True).start()
+
 
     def _read_real(self):
         try:
@@ -35,14 +40,40 @@ class SerialComm:
             self.queue.put(f"ERROR: {e}")
 
     def _simulate_data(self):
-        import random
+        import math, random
+
+        t0 = time.time()
+        ref = 20.0  # grados
+        angle = -50.0  # valor inicial
+        dt = 0.01
+        y = angle
+        dy = 0
+
+        # Parámetros del sistema de segundo orden (subamortiguado)
+        wn = 2.0  # frecuencia natural
+        zeta = 0.7  # factor de amortiguamiento
+
         while self.running:
-            ts  = time.time()
-            ang = random.uniform(-30, 30)
-            err = random.uniform(-5, 5)
-            pwm = random.uniform(1000, 2000)
-            self.queue.put((ts, ang, err, pwm))
-            time.sleep(0.001)
+            t = time.time() - t0
+
+            # Simulación del sistema de segundo orden discretizado
+            err = ref - y
+            ddy = wn**2 * err - 2 * zeta * wn * dy
+            dy += ddy * dt
+            y += dy * dt
+
+            # PWM simulado como proporcional al error (con saturación)
+            pwm_eq = 1500
+            pwm = pwm_eq + 10 * err + random.uniform(-2, 2)
+            pwm = max(1000, min(2000, pwm))
+
+            # Ruido leve agregado al ángulo y error
+            y_noisy = y + random.uniform(-0.5, 0.5)
+            err_noisy = err + random.uniform(-0.3, 0.3)
+
+            self.queue.put((t, y_noisy, err_noisy, pwm))
+            time.sleep(dt)
+
 
     def stop(self):
         self.running = False
