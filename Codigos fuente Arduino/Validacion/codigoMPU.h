@@ -5,14 +5,7 @@
 #include <MPU6050.h>
 #include <Arduino.h> // Incluye Arduino para tipos como `unsigned long`
 
-// Estructura para almacenar los datos de medición
-struct Medida {
-    unsigned long tiempo;
-    float angulo;
-};
 
-// Constante para el número máximo de mediciones
-const int max_medidas = 200;
 
 // Declaración de funciones
 void inicializarSensor();

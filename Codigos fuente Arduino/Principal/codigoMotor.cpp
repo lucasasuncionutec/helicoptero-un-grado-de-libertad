@@ -7,6 +7,11 @@ static int ultimoEstadoSwitch = HIGH; // Estado inicial del switch
 static bool yaCalibrado = false;   // Indica si el ESC ya fue calibrado
 int velocidadActual = 1000;       // Velocidad actual del ESC
 
+
+bool getCalibrado() {
+    return yaCalibrado;
+}
+
 // Variables auxiliares
 unsigned long ultimoTiempoRebote = 0; // Tiempo del último cambio de estado
 unsigned long retrasoRebote = 100;    // Tiempo para evitar rebotes
@@ -17,7 +22,6 @@ void inicializarMotor() {
     
     pinMode(SWITCH_PIN, INPUT_PULLUP);
     pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, LOW);  // Relé apagado
 }
 
 // Detectar si se presiona el switch con rebote
@@ -32,6 +36,7 @@ bool leerSwitchRebote() {
         }
     }
     ultimoEstadoSwitch = estadoActualSwitch;
+    
     return false; 
 }
 
@@ -39,10 +44,8 @@ bool leerSwitchRebote() {
 void loopCalibracion() {
     static unsigned long tiempoPrimerToque = 0; // Tiempo del primer toque
     static bool esperandoSegundoToque = false; // Indica si está esperando un segundo toque
-
     if (leerSwitchRebote()) {
         unsigned long tiempoActual = millis();
-
         if (!esperandoSegundoToque) {
             // Primer toque detectado
             esperandoSegundoToque = true;
@@ -50,15 +53,16 @@ void loopCalibracion() {
             motorESC.writeMicroseconds(1000);
             if (!yaCalibrado) {
                 Serial.println("Presione el botón otra vez solo si no escucha tres sonidos consecutivos.");
-                digitalWrite(RELAY_PIN, LOW); // Apagar relé
+                digitalWrite(RELAY_PIN, HIGH); // Apagar relé
                 delay(1000);
-                digitalWrite(RELAY_PIN, HIGH); // Encender relé
+                digitalWrite(RELAY_PIN, LOW); // Encender relé
+
             } else {
                 Serial.println("Reinicie el Arduino para calibrar.");
             }
         } else {
             // Segundo toque detectado
-            if (tiempoActual - tiempoPrimerToque <= 3000) { // Si ocurre dentro de 3 segundos
+            if (tiempoActual - tiempoPrimerToque <= 5000) { // Si ocurre dentro de 5 segundos
                 if (!yaCalibrado) {
                     calibrarESC();
                 }
@@ -77,19 +81,24 @@ void loopCalibracion() {
 void calibrarESC() {
     if (!yaCalibrado) {
         Serial.println("Calibración iniciada...");
- 
+        delay(2000);
         // Apagar el relé
         digitalWrite(RELAY_PIN, LOW);
         motorESC.writeMicroseconds(2000); // Señal máxima
+        Serial.println("Señal maxima");
         delay(1000);
   
         // Encender el relé
         digitalWrite(RELAY_PIN, HIGH);
+        delay(4000);
         motorESC.writeMicroseconds(1000); // Señal mínima
-        delay(6000);
+        Serial.println("Señal minima");
+        delay(1000);
   
         Serial.println("Calibración completada.");
         yaCalibrado = true;
+
+        delay(2000);
     }
 }
 
@@ -103,7 +112,7 @@ bool escribirVelocidadEnESC(int velocidad) {
             } else if (diferencia < 0) {
                 velocidadActual--;
             }
-            Serial.println(velocidadActual);
+            //Serial.println(velocidadActual);
             motorESC.writeMicroseconds(velocidadActual);
             delay(1); 
         }

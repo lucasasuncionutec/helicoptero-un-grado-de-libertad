@@ -29,7 +29,7 @@ tspan = [0 10];
 % Parámetros del sistema
 I = 0.0167;
 C = -0.1326;
-Lm = 0.35;
+Lm = 0.3310;
 u = 0; % Entrada constante
 
 % Vector de ángulos en grados

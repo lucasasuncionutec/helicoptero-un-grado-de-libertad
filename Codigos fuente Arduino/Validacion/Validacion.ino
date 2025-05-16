@@ -6,8 +6,18 @@ unsigned long tiempo_prev = 0;
 unsigned long tiempo_inicio;
 unsigned long duracion_simulacion;
 
-Medida medidas[max_medidas];
 int indice_medidas = 0;
+
+// Estructura para almacenar los datos de medición
+struct Medida {
+    unsigned long tiempo;
+    float angulo;
+};
+
+//número máximo de mediciones
+const int max_medidas = 200;
+
+Medida medidas[max_medidas];
 
 void setup() {
     Serial.begin(9600);
