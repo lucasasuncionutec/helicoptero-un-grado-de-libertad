@@ -45,6 +45,10 @@ Ki = (alpha4)/(alpha1*m*A);
 Kd = (alpha2 - B - Kp*m*A)/(alpha1*m*A);
 N = alpha1;
 
+Kp = 5.9067;
+Ki = 0.2765;
+Kd = 30.9819;
+N = 5.45;
 
 %% === Parámetros de simulación ===
 T    = 0.1;                      % Tiempo de muestreo [s]

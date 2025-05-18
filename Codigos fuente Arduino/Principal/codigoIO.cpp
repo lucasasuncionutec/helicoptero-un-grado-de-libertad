@@ -246,16 +246,81 @@ void verDatos()
     if (millis() - tLCD >= dtLCD) {
         lcd.setCursor(0, 1); lcd.print("                ");
         switch (dato) {
-            case 0: lcd.setCursor(0, 1); lcd.print("Tss: ");     lcd.print(Tss, 1); lcd.print(" s"); break;
-            case 1: lcd.setCursor(0, 1); lcd.print("Mp: ");      lcd.print(Mp * 100.0f, 1); lcd.print(" %"); break;
-            case 2: lcd.setCursor(0, 1); lcd.print("Ang eq: ");  lcd.print(angulo_equilibrio_rad * 180.0f / PI, 1); lcd.write(223); break;
-            case 3: lcd.setCursor(0, 1); lcd.print("PWM: ");     lcd.print(pwmAplicado, 0); break;
-            case 4: lcd.setCursor(0, 1); lcd.print("Ang act: "); lcd.print(anguloActual_deg, 1); lcd.write(223); break;
-            case 5: lcd.setCursor(0, 1); lcd.print("Error: ");   lcd.print(errorActual_deg, 1); break;
-            case 6: lcd.setCursor(0, 1); lcd.print("Kp: ");      lcd.print(Kp, 3); break;
-            case 7: lcd.setCursor(0, 1); lcd.print("Ki: ");      lcd.print(Ki, 3); break;
-            case 8: lcd.setCursor(0, 1); lcd.print("Kd: ");      lcd.print(Kd, 3); break;
-            case 9: lcd.setCursor(0, 1); lcd.print("N: ");       lcd.print(N, 3); break;
+            case 0:
+                lcd.setCursor(0, 1);
+                lcd.print("Tss");
+                if (tss_mp_recibidos_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(Tss, 1);
+                lcd.print(" s");
+                break;
+
+            case 1:
+                lcd.setCursor(0, 1);
+                lcd.print("Mp");
+                if (tss_mp_recibidos_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(Mp * 100.0f, 1);
+                lcd.print(" %");
+                break;
+
+            case 2:
+                lcd.setCursor(0, 1);
+                lcd.print("Ang eq: ");
+                lcd.print(angulo_equilibrio_rad * 180.0f / PI, 1);
+                lcd.write(223);
+                break;
+
+            case 3:
+                lcd.setCursor(0, 1);
+                lcd.print("PWM: ");
+                lcd.print(pwmAplicado, 0);
+                break;
+
+            case 4:
+                lcd.setCursor(0, 1);
+                lcd.print("Ang act: ");
+                lcd.print(anguloActual_deg, 1);
+                lcd.write(223);
+                break;
+
+            case 5:
+                lcd.setCursor(0, 1);
+                lcd.print("Error: ");
+                lcd.print(errorActual_deg, 1);
+                break;
+
+            case 6:
+                lcd.setCursor(0, 1);
+                lcd.print("Kp");
+                if (pid_recibido_desde_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(Kp, 3);
+                break;
+
+            case 7:
+                lcd.setCursor(0, 1);
+                lcd.print("Ki");
+                if (pid_recibido_desde_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(Ki, 3);
+                break;
+
+            case 8:
+                lcd.setCursor(0, 1);
+                lcd.print("Kd");
+                if (pid_recibido_desde_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(Kd, 3);
+                break;
+
+            case 9:
+                lcd.setCursor(0, 1);
+                lcd.print("N");
+                if (pid_recibido_desde_pc) lcd.print("*");
+                lcd.print(": ");
+                lcd.print(N, 3);
+                break;
         }
         tLCD = millis();
     }
@@ -268,6 +333,7 @@ void verDatos()
     else if (key == '*') { inSubMenu = false; init = true; showMenu(); }
     else if (key == 'C' || key == 'c') { toggleControl(); }
 }
+
 
 
 

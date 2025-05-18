@@ -44,9 +44,14 @@ float anguloReferencia_rad  = 0.0;   // [rad]
 
 int pin_test_tiempo_muestreo = 8;
 
-// ----------------------------------------------------------------------
-// Cálculo del PIDf discreto completo (polos asignados)
-// ----------------------------------------------------------------------
+bool pid_recibido_desde_pc = false;
+bool tss_mp_recibidos_pc   = false;
+bool pwm_recibido_pc       = false;
+float pwm_pc = 1000.0f;     // PWM recibido desde la PC (si viene)
+bool  toggle_pc = false;    // Estado del control (ON/OFF) recibido desde la PC
+
+
+
 void calcularPIDfCompleto(float angulo_eq_rad, float Mp, float Tss)
 {
     angulo_equilibrio_rad = angulo_eq_rad;
@@ -55,8 +60,10 @@ void calcularPIDfCompleto(float angulo_eq_rad, float Mp, float Tss)
     float B   = C * sin(angulo_equilibrio_rad) / I;
     float T_s = T / 1000.0f;
 
-    float ln100_Mp = log(100.0f / Mp);
-    float zeta     = ln100_Mp / sqrt(PI * PI + ln100_Mp * ln100_Mp);
+    // Cálculo de parámetros deseados
+    float lnMp  = log(Mp);  // Mp en [0,1]
+    float zeta  = -lnMp / sqrt(PI * PI + lnMp * lnMp);
+
     float omega_n  = 4.0f / (zeta * Tss);
 
     float p1 = 10.0f * zeta * omega_n;
@@ -67,12 +74,13 @@ void calcularPIDfCompleto(float angulo_eq_rad, float Mp, float Tss)
     float alpha3 = 2.0f * zeta * omega_n * p1 * p2 + omega_n * omega_n * (p1 + p2);
     float alpha4 = omega_n * omega_n * p1 * p2;
 
-    
+    // Cálculo de ganancias del PIDf
     Kp = (alpha3 - alpha1 * B - (alpha4 / alpha1)) / (alpha1 * m * A);
     Ki = alpha4 / (alpha1 * m * A);
     Kd = (alpha2 - B - Kp * m * A) / (alpha1 * m * A);
     N  = alpha1;
 
+    // Coeficientes del controlador discreto
     float a = Kp + Kd * N;
     float b = Kp * N + Ki;
     float c = Ki * N;
@@ -89,19 +97,27 @@ void calcularPIDfCompleto(float angulo_eq_rad, float Mp, float Tss)
     a4 = -exp(-d * T_s) - 1.0f;
     a5 = exp(-d * T_s);
 
+    // Cálculo de la fuerza de equilibrio
     fuerza_equilibrio = -(C * cos(angulo_equilibrio_rad)) / Lm;
     PWM_equilibrio    = (fuerza_equilibrio - r) / m;
 
-    // Imprimir resultados por consola
-    Serial.println("=== PID Recalculado ===");
-    Serial.print("Tss: "); Serial.print(Tss); Serial.print(" s\t");
-    Serial.print("Mp: ");  Serial.print(Mp);  Serial.println(" %");
+    // ----------------- Impresión en consola -----------------
+    Serial.println("\n========== PID Recalculado ==========");
+    Serial.print("Tss: "); Serial.print(Tss, 3); Serial.print(" s\t");
+    Serial.print("Mp: ");  Serial.print(Mp, 2); Serial.println(" %");
+
+    Serial.print("Zeta (ζ): "); Serial.println(zeta, 5);
+    Serial.print("Omega_n (ωₙ): "); Serial.print(omega_n, 5); Serial.println(" rad/s");
 
     Serial.print("Kp: "); Serial.print(Kp, 5);
     Serial.print("\tKi: "); Serial.print(Ki, 5);
     Serial.print("\tKd: "); Serial.print(Kd, 5);
     Serial.print("\tN: ");  Serial.println(N, 5);
-    Serial.println("========================\n");
+
+    Serial.print("Ángulo de equilibrio: ");
+    Serial.print(angulo_equilibrio_rad * 180 / PI, 3); Serial.println("°");
+
+    Serial.println("=====================================\n");
 }
 
 
@@ -130,58 +146,97 @@ void loop()
     static unsigned long t_anterior = 0;
     const unsigned long Ts_ms = T - T_procesamiento_total;
 
+    // Variables de estado persistentes entre iteraciones
+    static bool  yaIniciadoTemporizador = false;
+    static float ultimoAngulo_rad       = -999.0f;
+    static float ultimoTss              = -1.0f;
+    static float ultimoMp               = -1.0f;
+
     if (millis() - t_anterior >= Ts_ms) {
         t_anterior = millis();
 
         digitalWrite(pin_test_tiempo_muestreo, HIGH);
 
         loopCalibracion();  // rutina de calibración mecánica
-        leerDatosDesdePC(Tss, Mp);
 
-        anguloActual_deg = leerAngulo();                          // grados desde sensor
-        anguloActual_rad = anguloActual_deg * PI / 180.0f;        // conversión a radianes
+        // Detecta si vienen valores del software
+        float kp_manual, ki_manual, kd_manual, n_manual;
+        bool pid_manual_recibido = leerDatosDesdePC(Tss, Mp, kp_manual, ki_manual, kd_manual, n_manual, pwm_pc, toggle_pc);
+
+        if (pid_manual_recibido) {
+            Kp = kp_manual;
+            Ki = ki_manual;
+            Kd = kd_manual;
+            N  = n_manual;
+
+            pid_recibido_desde_pc = true;
+            Serial.println("[Arduino] PID recibido desde PC → valores sobrescritos");
+        }
+
+        if (Tss != ultimoTss || Mp != ultimoMp) {
+            tss_mp_recibidos_pc = true;
+        }
+
+        if (pwm_pc != 1000.0f) {
+            pwm_recibido_pc = true;
+        }
+
+        if (pid_manual_recibido || pwm_recibido_pc || tss_mp_recibidos_pc) {
+            controlActivo = toggle_pc;
+        }
+
+        // Medición de estado actual
+        anguloActual_deg = leerAngulo();
+        anguloActual_rad = anguloActual_deg * PI / 180.0f;
         float error = anguloReferencia_rad - anguloActual_rad;
+        float u = 0.0f;
 
-        // === Control PIDf discreto (siempre se calcula, pero solo se aplica si está activo)
-        float u = (1.0f / a3) *
-                  (a0 * error + a1 * error_km1 + a2 * error_km2
-                  - a4 * u_km1  - a5 * u_km2);
-
-        float PWM_aplicar = constrain(u + PWM_equilibrio, 1000.0f, 2000.0f);
-        u = PWM_aplicar - PWM_equilibrio;
+        // Control PIDf discreto
+        float PWM_aplicar;
+        if (pwm_recibido_pc) {
+            PWM_aplicar = constrain(pwm_pc, 1000.0f, 2000.0f);
+        } else {
+            float u_local = (1.0f / a3) *
+                            (a0 * error + a1 * error_km1 + a2 * error_km2
+                            - a4 * u_km1  - a5 * u_km2);
+            PWM_aplicar = constrain(u_local + PWM_equilibrio, 1000.0f, 2000.0f);
+            u = u_local;
+        }
 
         errorActual_deg = error * 180.0f / PI;
         pwmAplicado     = controlActivo ? PWM_aplicar : 1000.0f;
 
-        // Aplicar al motor solo si el control está activo
         if (controlActivo && Tss >= 12.0f) {
             escribirVelocidadEnESC(pwmAplicado);
         } else {
             escribirVelocidadEnESC(1000);
         }
 
-        // Actualización de estados del PID (siempre)
+        // Actualización de estados del PID
         error_km2 = error_km1; error_km1 = error;
         u_km2     = u_km1;     u_km1    = u;
 
-        // === Cálculo del PID si cambian parámetros o ángulo de equilibrio
-        static bool  yaIniciadoTemporizador = false;
-        static float ultimoAngulo_rad       = -999.0f;
-        static float ultimoTss              = -1.0f;
-
+        // Recalcular PID si cambian condiciones
         if (controlActivo && Tss >= 8.0f &&
-            (angulo_equilibrio_rad != ultimoAngulo_rad || Tss != ultimoTss))
-        {
+            (angulo_equilibrio_rad != ultimoAngulo_rad || Tss != ultimoTss)) {
+            
             calcularPIDfCompleto(angulo_equilibrio_rad, Mp, Tss);
             ultimoAngulo_rad = angulo_equilibrio_rad;
             ultimoTss        = Tss;
+            ultimoMp         = Mp;
+
+            // Restaurar control interno del Arduino
+            pid_recibido_desde_pc = false;
+            tss_mp_recibidos_pc   = false;
+            pwm_recibido_pc       = false;
+
             if (!yaIniciadoTemporizador) {
                 iniciarTemporizador();
                 yaIniciadoTemporizador = true;
             }
         }
 
-        // === Registro de datos (si el control está activo)
+        // Registro de datos
         static bool datosYaImpresos = false;
         if (controlActivo && getCalibrado() && !registroCompleto() && verificarMuestreo()) {
             guardarRegistro(obtenerTiempoActual(), anguloActual_deg, PWM_aplicar, errorActual_deg);
@@ -197,4 +252,3 @@ void loop()
         digitalWrite(pin_test_tiempo_muestreo, LOW);
     }
 }
-

@@ -1,5 +1,10 @@
 #include "CodigoComunicacionSoftware.h"
 
+extern bool pid_recibido_desde_pc;
+extern bool tss_mp_recibidos_pc;
+extern bool pwm_recibido_pc;
+
+
 // === Función para recibir un vector de datos separados por coma ===
 void recibirDatosSerial(float* vector, int maxValores, int* cantidadLeida) {
     static String buffer = "";
@@ -41,7 +46,10 @@ void enviarDatosSerial(float* vector, int cantidad) {
 // === Función para comunicación de datos específicos ===
 
 
-void leerDatosDesdePC(float& Tss_ref, float& Mp_ref) {
+bool leerDatosDesdePC(float& Tss_ref, float& Mp_ref,
+                      float& kp_pc, float& ki_pc, float& kd_pc, float& n_pc,
+                      float& pwm_pc, bool& toggle_pc)
+{
     float datosRecibidos[10];
     int cantidadRecibida = 0;
     recibirDatosSerial(datosRecibidos, 10, &cantidadRecibida);
@@ -49,8 +57,30 @@ void leerDatosDesdePC(float& Tss_ref, float& Mp_ref) {
     if (cantidadRecibida >= 2) {
         Tss_ref = datosRecibidos[0];
         Mp_ref  = datosRecibidos[1];
+        tss_mp_recibidos_pc = true;
     }
+
+    if (cantidadRecibida >= 6) {
+        kp_pc = datosRecibidos[2];
+        ki_pc = datosRecibidos[3];
+        kd_pc = datosRecibidos[4];
+        n_pc  = datosRecibidos[5];
+        pid_recibido_desde_pc = true;
+    }
+
+    if (cantidadRecibida >= 7) {
+        pwm_pc = datosRecibidos[6];
+        pwm_recibido_pc = true;
+    }
+
+    if (cantidadRecibida >= 8) {
+        toggle_pc = datosRecibidos[7] > 0.5f;
+    }
+
+    return (cantidadRecibida >= 6);  // true si al menos vino PID completo
 }
+
+
 
 void enviarDatosALaPC(float angulo_deg, float error_deg, float pwm) {
     float datosAEnviar[3] = {angulo_deg, error_deg, pwm};

@@ -56,7 +56,8 @@ class ControlSystem:
     def assignment_tf(self, Tss, Mp):
         zeta = -np.log(Mp) / np.sqrt(np.pi**2 + (np.log(Mp))**2)
         wn = 4.0 / (zeta * Tss)
-        return TransferFunction([wn**2], [1, 2*zeta*wn, wn**2])
+        tf = TransferFunction([wn**2], [1, 2*zeta*wn, wn**2])
+        return tf, zeta, wn
 
     def closed_loop(self, C):
         G = self.get_real_plant_tf()
