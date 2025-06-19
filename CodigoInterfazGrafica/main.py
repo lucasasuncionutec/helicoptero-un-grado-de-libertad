@@ -18,6 +18,44 @@ from pz_charts_matplotlib import PZChartMatplotlib as PZChart
 import pyqtgraph as pg
 from control import step_response
 from control import forced_response
+import queue
+from PySide6.QtCore import QRunnable, QThreadPool
+from PySide6.QtCore import QThread, Signal, Slot
+import csv
+
+MAX_SAMPLES = 3000          # lo que quieras que quepa en la gráfica
+MAX_BATCH   = 200           # p. ej. límite de seguridad
+
+class StepWorker(QThread):
+    finished = Signal(np.ndarray, np.ndarray, np.ndarray, object, object)
+
+    def __init__(self, Gp, Gm, C_tf,
+                 t_pre, t_vis, u_vis, y_offset,
+                 ctrl, parent=None):
+        super().__init__(parent)
+        self.Gp, self.Gm, self.C_tf = Gp, Gm, C_tf
+        self.t_pre, self.t_vis, self.u_vis = t_pre, t_vis, u_vis
+        self.y_offset = y_offset          # <<< nuevo
+        self.ctrl = ctrl
+
+    def run(self):
+        T_closed = feedback(self.C_tf * self.Gp * self.Gm, 1)
+        _, y_vis = forced_response(T_closed, T=self.t_vis, U=self.u_vis)
+
+        # Añadimos el ángulo inicial
+        y_vis = y_vis + self.y_offset     # <<< aquí
+
+        err_vis = self.ctrl.anguloReferencia_rad - y_vis
+
+        _, delta_pwm = forced_response(self.C_tf, T=self.t_vis, U=err_vis)
+        pwm_eq = self.ctrl.pwm_equilibrio()
+        pwm_vis = np.clip(delta_pwm + pwm_eq, 1000, 2000)
+
+        poles, zeros = T_closed.poles(), T_closed.zeros()
+        self.finished.emit(self.t_vis - self.t_vis[0],
+                           y_vis, pwm_vis, poles, zeros)
+
+
 
 class BlockDiagramCanvas(QLabel):
     def __init__(self, parent=None):
@@ -36,17 +74,23 @@ class BlockDiagramCanvas(QLabel):
         else:
             self.setPixmap(pixmap)
 
-
-
 class ControlApp(QMainWindow):   
     def __init__(self):
         super().__init__()
+
+        self._error_km1 = 0.0
+        self._error_km2 = 0.0
+        self._u_km1 = 0.0
+        self._u_km2 = 0.0
+        self._Ts = 0.02  # Asumiendo 50 Hz
+        self._last_tss = 12.0      # mismo valor que tiene el sketch al arrancar
+        self._last_mp  = 0.20
+
         self.setWindowTitle("Control Helicóptero 1‑DOF")
         self.resize(1200, 800)
 
         self.comm = SerialComm(simulate=False)
         self.comm.start()
-
         self.ctrlsys = ControlSystem()
         self.C_tf = self.ctrlsys.pidf_tf(1, 0, 0, 10)
 
@@ -66,20 +110,32 @@ class ControlApp(QMainWindow):
         tabs.addTab(self.tab_simulacion, "Simulación")
         tabs.addTab(self.tab_estilo, "Estilo")  
 
+        # ⚠️ Primero se debe ejecutar setup_tab_modelo() para crear spin_kp, etc.
         self.setup_tab_modelo()
+
+        # Referencia en radianes (usada luego en cálculos)
         self.anguloReferencia = np.radians(self.ref_spin.value())
+
+        # Ahora se pueden acceder los valores de los spinbox
+        kp = self.spin_kp.value()
+        ki = self.spin_ki.value()
+        kd = self.spin_kd.value()
+        n  = self.spin_n.value()
+
+        self.ctrlsys.set_pidf_coefs(kp, ki, kd, n, self._Ts)
+
+        self.comm.set_referencia(self.ref_spin.value())
+
         self.setup_tab_simulacion()
-        self.setup_tab_estilo() 
-
-
+        self.setup_tab_estilo()
         hmain.addWidget(tabs)
+
 
         # === Panel derecho ===
         gpanel = QWidget()
         gv = QVBoxLayout(gpanel)
         self.gv_layout = gv
 
-        # ---------- Banner de advertencias que llegan por el puerto serie ----------
         self.lbl_serial_warning = QLabel("")
         self.lbl_serial_warning.setStyleSheet("""
             QLabel {
@@ -92,56 +148,69 @@ class ControlApp(QMainWindow):
             }
         """)
         self.lbl_serial_warning.setAlignment(Qt.AlignCenter)
-        self.lbl_serial_warning.hide()           # comienza oculto
-        gv.addWidget(self.lbl_serial_warning)    # lo ubicamos arriba de los plots
+        self.lbl_serial_warning.hide()
+        gv.addWidget(self.lbl_serial_warning)
 
-
-      # === Crear gráficas sin título inicialmente ===
+        # === Gráficas ===
         self.plot_angle = pg.PlotWidget()
         self.plot_error = pg.PlotWidget()
         self.plot_pwm   = pg.PlotWidget()
 
-        # === Diccionario de títulos por gráfica ===
         self.titles = {
             self.plot_angle: "Ángulo [°]",
             self.plot_error: "Error [°]",
             self.plot_pwm:   "PWM aplicado",
         }
 
-        # === Asignar título a cada gráfica ===
         for plot, title in self.titles.items():
             plot.setTitle(title)
 
-
-
-        # Ángulo
         self.plot_angle.setLabel("bottom", "Tiempo [s]")
         self.plot_angle.setLabel("left", "Ángulo [°]")
         self.curve_angle_real = self.plot_angle.plot(pen='y', name='Ángulo (real)')
         self.curve_angle_sim  = self.plot_angle.plot(pen='c', name='Ángulo (sim)')
 
-        # Error
         self.plot_error.setLabel("bottom", "Tiempo [s]")
         self.plot_error.setLabel("left", "Error [°]")
         self.curve_error_real = self.plot_error.plot(pen='r', name='Error (real)')
         self.curve_error_sim  = self.plot_error.plot(pen='m', name='Error (sim)')
 
-        # PWM
         self.plot_pwm.setLabel("bottom", "Tiempo [s]")
         self.plot_pwm.setLabel("left", "PWM aplicado")
         self.curve_pwm_real = self.plot_pwm.plot(pen='g', name='PWM (real)')
         self.curve_pwm_sim  = self.plot_pwm.plot(pen='b', name='PWM (sim)')
         self._aplicar_estilo_curvas()
 
+        # Línea horizontal = ÁNGULO DE REFERENCIA
+        self.hline_angle_ref = pg.InfiniteLine(
+                angle=0, movable=False,
+                pen=pg.mkPen('w', style=Qt.DashLine, width=1))
+        self.plot_angle.addItem(self.hline_angle_ref)
+
+        # Línea horizontal = error 0
+        self.hline_error_0 = pg.InfiniteLine(
+                pos=0, angle=0, movable=False,
+                pen=pg.mkPen('w', style=Qt.DashLine, width=1))
+        self.plot_error.addItem(self.hline_error_0)
+
+        # Línea horizontal = PWM equilibrio
+        self.hline_pwm_eq = pg.InfiniteLine(
+                angle=0, movable=False,
+                pen=pg.mkPen('w', style=Qt.DashLine, width=1))
+        self.plot_pwm.addItem(self.hline_pwm_eq)
+
+        # posición inicial
+        self._update_reference_lines()
+
         gv.addWidget(self.plot_angle)
         gv.addWidget(self.plot_error)
         gv.addWidget(self.plot_pwm)
+
         self.display_options_sim = {
             "Ángulo (sim)": True,
             "Error (sim)": True,
             "PWM aplicado (sim)": True,
         }
-
 
         self.display_flags = {
             "angle_real": True, "angle_sim": True,
@@ -149,8 +218,6 @@ class ControlApp(QMainWindow):
             "pwm_real": True,   "pwm_sim": True,
         }
 
-
-        # === Fila inferior con imagen + PZChart ===
         bottom_widget = QWidget()
         hbottom = QHBoxLayout(bottom_widget)
         hbottom.setContentsMargins(0, 0, 0, 0)
@@ -167,11 +234,9 @@ class ControlApp(QMainWindow):
         gv.addWidget(bottom_widget)
         hmain.addWidget(gpanel, stretch=1)
 
-        # === Final setup ===
         self.pz_chart.set_poles_zeros([], [])
 
-
-        self.timer = QTimer(); self.timer.setInterval(1)
+        self.timer = QTimer(); self.timer.setInterval(50)
         self.timer.timeout.connect(self._update)
         self._buff = []
 
@@ -183,11 +248,23 @@ class ControlApp(QMainWindow):
         self.nombre_mecanica = {"Modelo sin fricción": "ModeloMecanico1"}
         self.nombre_control = {"PIDf manual": "PIDf", "Asign polos": "ModeloAsignacionPolos1"}
 
-        
         self._actualizar_constantes_modelo()
 
         self.sim_data = {"t": [], "y": [], "error": [], "pwm": []}
         self.real_data = {"t_ang": ([],), "angle": [], "error": [], "pwm": []}
+
+    def _update_reference_lines(self):
+        """Recoloca las tres líneas horizontales de referencia."""
+        # ángulo de equilibrio (rad → deg)
+        ref_deg = np.degrees(self.anguloReferencia)     # <- referencia, no θ_eq
+        self.hline_angle_ref.setPos(ref_deg)
+
+        # error 0 ya está en 0  → nada
+
+        # PWM equilibrio
+        pwm_eq = self.ctrlsys.pwm_equilibrio()
+        self.hline_pwm_eq.setPos(pwm_eq)
+
 
     def add_toggle_buttons(self, label, key_real, key_sim, layout_destino):
         row = QHBoxLayout()
@@ -354,7 +431,61 @@ class ControlApp(QMainWindow):
         group_visibility.setLayout(layout_visibility)
         layout.addWidget(group_visibility)
 
+       
+
         layout.addStretch()
+
+    
+
+    def _guardar_datos_csv(self):
+        from PySide6.QtWidgets import QFileDialog
+        import csv
+        import numpy as np
+
+        fn, _ = QFileDialog.getSaveFileName(self, "Guardar datos", "", "CSV (*.csv)")
+        if not fn:
+            return
+
+        # === TIEMPOS ===
+        t_sim_raw  = self.sim_data.get("t", [])
+        t_real_raw = self.real_data.get("t_ang", [])[0]  # ⟵ CORREGIDO: acceder a la lista
+
+        max_len = max(len(t_sim_raw), len(t_real_raw))
+
+        # Si faltan, completar con NaN
+        def pad(seq, L): return list(seq) + [np.nan] * (L - len(seq))
+
+        t_combined = pad(t_real_raw, max_len)  # ⟵ ahora usa tiempo real, no _Ts
+
+        # === SIMULADO ===
+        y_sim   = pad(np.degrees(self.sim_data.get("y", [])), max_len)
+        err_sim = pad(np.degrees(self.sim_data.get("error", [])), max_len)
+        pwm_sim = pad(self.sim_data.get("pwm", []), max_len)
+
+        # === REAL ===
+        y_real   = pad(self.real_data.get("angle", []), max_len)
+        err_real = pad(self.real_data.get("error", []), max_len)
+        pwm_real = pad(self.real_data.get("pwm", []),   max_len)
+
+        try:
+            with open(fn, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "tiempo_s",
+                    "angulo_sim_deg", "error_sim_deg", "pwm_sim",
+                    "angulo_real_deg", "error_real_deg", "pwm_real"
+                ])
+
+                for i in range(max_len):
+                    writer.writerow([
+                        f"{t_combined[i]:.3f}",
+                        y_sim[i], err_sim[i], pwm_sim[i],
+                        y_real[i], err_real[i], pwm_real[i]
+                    ])
+
+            print(f"[CSV] Datos exportados correctamente a: {fn}")
+        except Exception as e:
+            print(f"[ERROR] No se pudieron guardar los datos: {e}")
 
 
     def _elegir_color_fondo(self):
@@ -561,17 +692,25 @@ class ControlApp(QMainWindow):
         kd = self.spin_kd.value()
         n  = self.spin_n.value()
 
-        # Solo usar Tss y Mp si existen (solo en modo "Asign polos")
-        tss = self.tss_spin.value() if hasattr(self, "tss_spin") else 0.0
-        mp  = self.mp_spin.value()  if hasattr(self, "mp_spin") else 0.0
+        # Decidir si usar Tss/Mp desde spinbox o usar los últimos conocidos
+        if self.cb_c.currentText() == "Asign polos" and hasattr(self, "tss_spin") and hasattr(self, "mp_spin"):
+            tss = self.tss_spin.value()
+            mp  = self.mp_spin.value()
+            self._last_tss = tss  # guardar valores actuales
+            self._last_mp  = mp
+        else:
+            # usa los últimos guardados si no están los spinboxes
+            tss = getattr(self, "_last_tss", 12.0)
+            mp  = getattr(self, "_last_mp", 0.20)
 
-        # Solo enviar si hay al menos Kp, Ki, Kd, N
+        # Solo enviar si hay al menos algún valor de PID diferente de cero
         if any([kp, ki, kd, n]):
-            msg = f"{tss:.5f},{mp:.5f},{kp:.5f},{ki:.5f},{kd:.5f},{n:.5f}"
-            self.comm.send_command(msg)
-            print(f"[PC → Arduino] {msg}")
+            self.comm.send_pidf_data(tss, mp, kp, ki, kd, n, np.nan, np.nan)
+            print(f"[PC → Arduino] PID + PWM enviados")
+
         else:
             print("[Advertencia] No se enviaron datos porque los parámetros están vacíos.")
+
 
 
     def _actualizar_modelo_dinamico(self):
@@ -658,6 +797,8 @@ class ControlApp(QMainWindow):
         btn_stop = QPushButton("⏹")
         btn_stop.setStyleSheet("background-color: #F44336; font-size: 14pt; font-weight: bold;")
         btn_stop.clicked.connect(partial(self._run, False))
+
+
         hrun.addWidget(btn_stop)
 
         layout.addLayout(hrun)
@@ -702,6 +843,10 @@ class ControlApp(QMainWindow):
         layout.addWidget(group_pz)
 
 
+        btn_export = QPushButton("Guardar datos CSV")
+        btn_export.setStyleSheet("background-color: #b1d33f; font-weight: bold;")
+        btn_export.clicked.connect(self._guardar_datos_csv)
+        layout.addWidget(btn_export)
 
         layout.addStretch()
 
@@ -772,16 +917,23 @@ class ControlApp(QMainWindow):
         else:
             self.curve_pwm_sim.clear()
 
-        
-
-
     def _run(self, start: bool):
         if start:
-            self.timer.start()  # solo empieza a graficar
-            QTimer.singleShot(200, lambda: self._update(force=True))  # opcional, para forzar un primer update
+            # en lugar de vaciar toda la cola:
+            for _ in range(100):
+                try:    self.comm.queue.get_nowait()
+                except queue.Empty:
+                    break
+            self.timer.start()
+            QTimer.singleShot(200, lambda: self._update(force=True))
         else:
-            self.timer.stop()  # pausa la graficación, pero sigue conectado
-
+            self.timer.stop()
+        # enviar toggle…
+        self.comm.send_pidf_data(
+            np.nan, np.nan,
+            np.nan, np.nan, np.nan, np.nan,
+            np.nan, 1 if start else 0
+        )
 
 
     def _pause(self): self.timer.setEnabled(not self.timer.isActive())
@@ -797,6 +949,13 @@ class ControlApp(QMainWindow):
         self._update_plot_visibility()
         print("[Datos reales] Reiniciados")
 
+        # Enviar toggle = 1 al Arduino para activar/controlar el sistema
+        self.comm.send_pidf_data(
+            np.nan, np.nan,
+            np.nan, np.nan, np.nan, np.nan,
+            np.nan, 1
+        )
+
     def _edit_pid(self):
         self.C_tf = self.ctrlsys.pidf_tf(2.0, 1.0, 0.5, 10.0)
 
@@ -810,7 +969,7 @@ class ControlApp(QMainWindow):
         self.ctrlsys.set_equilibrium_angle_deg(value_deg)
         self._update_pz()
         self._actualizar_constantes_modelo()
-
+        self._update_reference_lines()
         # Si el checkbox está activado, sincronizar con la referencia
         if self.cb_same_as_eq.isChecked():
             self.ref_spin.blockSignals(True)  # Evita que dispare _on_reference_changed
@@ -882,52 +1041,73 @@ class ControlApp(QMainWindow):
 
     def _update(self, force: bool = False):
         """
-        - Vacía la cola que llega desde `SerialComm`
-        - Muestra/oculta la advertencia ESC
-        - Convierte cada trama (ang, err, pwm) en puntos de 20 ms y los grafica
+        Vacía la cola de recepción, actualiza la gráfica y envía **sólo
+        el último pwm_sw** al Arduino sin asumir un período fijo: la X real
+        se toma del instante de llegada (time.perf_counter()).
         """
-        # ------------ 1. Procesar mensajes de la cola -------------
-        while not self.comm.queue.empty():
-            item = self.comm.queue.get()
+        last_sample = None           # (t_pc, ang_deg, err_deg, pwm_sw)
+        n_read = 0
 
-            # ► Advertencia que viene como tupla ('ESC_WARNING', texto)
+        while n_read < MAX_BATCH:
+            try:
+                item = self.comm.queue.get_nowait()
+            except queue.Empty:
+                break
+            n_read += 1
+
+            # — banner ESC —
             if isinstance(item, tuple) and item[0] == "ESC_WARNING":
                 self.lbl_serial_warning.setText(f"⚠️ {item[1]}")
                 self.lbl_serial_warning.show()
                 self._esc_last_received = time.time()
                 continue
 
-            # ► Trama numérica: (ángulo, error, pwm)
-            if isinstance(item, (tuple, list)) and len(item) == 3:
-                self._buff.append(tuple(item))
-            # (opcional) silenciar cualquier otra cosa:
-            # else:
-            #     print(f"[SERIAL] Ignorado: {item!r}")
+            # — datos numéricos —
+            if isinstance(item, (tuple, list)) and len(item) == 4:
+                ang_deg, err_deg, _, _ = item
+                try:
+                    pwm_sw = self.ctrlsys.calcular_pwm(ang_deg)
+                except Exception as e:
+                    print("[PWM-SW] error:", e)
+                    pwm_sw = -1
+                now = time.perf_counter()                # ⟵ marca temporal real
+                last_sample = (now, ang_deg, err_deg, pwm_sw)
 
-        # ------------ 2. Ocultar banner si expiró -----------------
-        if hasattr(self, "_esc_last_received"):
-            if time.time() - self._esc_last_received > 1.0:
-                self.lbl_serial_warning.hide()
+        # ocultar banner ESC al cabo de 1 s
+        if hasattr(self, "_esc_last_received") and \
+                time.time() - self._esc_last_received > 1:
+            self.lbl_serial_warning.hide()
 
-        # ------------ 3. Si no hay datos, salir -------------------
-        if not self._buff and not force:
+        # — enviamos SOLO el último PWM —
+        if last_sample is not None:
+            _, _, _, pwm_sw = last_sample
+            self.comm.send_pidf_data(np.nan, np.nan,
+                                    np.nan, np.nan, np.nan, np.nan,
+                                    pwm_sw, 1)
+            self._buff.append(last_sample)
+
+        if not last_sample and not force:
             return
 
-        # ------------ 4. Actualizar curvas ------------------------
+        # recortar búfer
+        if len(self._buff) > MAX_SAMPLES:
+            self._buff = self._buff[-MAX_SAMPLES:]
+
+        # graficar con tiempo real
         try:
-            ang, err, pwm = zip(*self._buff)         # desempaca
-            ts = np.arange(len(ang)) * 0.02          # 20 ms → 50 Hz
+            ts_pc, ang, err, pwm = zip(*self._buff)
+            t0 = ts_pc[0]
+            ts = [t - t0 for t in ts_pc]       # segundos desde el arranque
 
             self.real_data = {
-                "t_ang": (ts,),   # ← mantiene interfaz con _update_plot_visibility
+                "t_ang": (ts,),
                 "angle": ang,
                 "error": err,
                 "pwm":   pwm,
             }
             self._update_plot_visibility()
-
         except Exception as e:
-            print(f"[SERIAL] Error al graficar: {e}")
+            print("[GUI] error al graficar:", e)
 
 
     def _pz_moved(self, poles, zeros):
@@ -940,97 +1120,45 @@ class ControlApp(QMainWindow):
         super().closeEvent(ev)
 
     def _recalcular_step(self):
-        try:
-            motor_name = self.cb_m.currentText()
-            mech_name  = self.cb_e.currentText()
-            control_mode = self.cb_c.currentText()
-            t_final = self.step_time_spin.value()
+        t_pre  = 60.0
+        t_real = self.step_time_spin.value()
+        t      = np.linspace(0, t_pre + t_real, 2000)
 
-            print(f"\n[Simulación paso] Modo: {control_mode}")
-            print(f"  - Modelo motor:    {motor_name}")
-            print(f"  - Modelo mecánica: {mech_name}")
-            print(f"  - Tiempo simulado: {t_final} s")
+        ref1 = np.radians(self.init_spin.value())   # ángulo inicial
+        ref2 = self.anguloReferencia                # nueva referencia
+        delta = ref2 - ref1                         # salto a simular
 
-            # === ACTUALIZAR CONTROLADOR DESDE SPINBOX ===
-            if control_mode == "PIDf manual":
-                kp = self.spin_kp.value()
-                ki = self.spin_ki.value()
-                kd = self.spin_kd.value()
-                n  = self.spin_n.value()
-                self.C_tf = self.ctrlsys.pidf_tf(kp, ki, kd, n)
-                print(f"  - Controlador PIDf actualizado: Kp={kp}, Ki={ki}, Kd={kd}, N={n}")
+        # entrada: 0 antes de t_pre, salto = delta después
+        u = np.where(t < t_pre, 0.0, delta)
 
-            # === Simular sistema cerrado ===
-            Gm = self.ctrlsys.get_mech_tf(mech_name)
-            Gp = self.ctrlsys.get_motor_tf(motor_name)
-            C  = self.C_tf
-            T  = feedback(C * Gp * Gm, 1)
+        mask = t >= t_pre
+        t_vis = t[mask]
+        u_vis = u[mask]
 
-            # Mostrar polos y ceros en consola
-            poles = T.poles()
-            zeros = T.zeros()
+        Gp = self.ctrlsys.get_motor_tf(self.cb_m.currentText())
+        Gm = self.ctrlsys.get_mech_tf(self.cb_e.currentText())
 
-            print("Polos del sistema:", poles)
-            print("Ceros del sistema:", zeros)
-
-            # Mostrar en interfaz con ambas notaciones
-            def format_complex(c):
-                r = abs(c)
-                a = np.angle(c)
-                return f"{c.real:>7.3f} + {c.imag:>7.3f}j   | {r:>6.3f} ∠ {np.degrees(a):>6.2f}°"
-
-            p_txt = "\n".join([f"• {format_complex(p)}" for p in poles]) or "—"
-            z_txt = "\n".join([f"• {format_complex(z)}" for z in zeros]) or "—"
-
-            self.lbl_poles.setText(f"Polos:\n{p_txt}")
-            self.lbl_zeros.setText(f"Ceros:\n{z_txt}")
+        self.step_thread = StepWorker(
+            Gp, Gm, self.C_tf,
+            t_pre, t_vis, u_vis,
+            y_offset=ref1,                # <<< nuevo
+            ctrl=self.ctrlsys
+        )
+        self.step_thread.finished.connect(self._on_step_finished)
+        self.step_thread.start()
 
 
-
-            t_pre  = 60.0                         # duración de la etapa inicial
-            t_real = self.step_time_spin.value()  # duración que el usuario pidió
-            t_total = t_pre + t_real
-
-            # Tiempo total de simulación
-            t = np.linspace(0, t_total, 2000)
-
-            # Primera parte: mantener el sistema en el ángulo inicial
-            ref1 = np.radians(self.init_spin.value())
-            ref2 = self.anguloReferencia
-
-            u = np.piecewise(t, [t < t_pre, t >= t_pre], [ref1, ref2])
-
-            # Simular todo
-            t_sim, y = forced_response(T, T=t, U=u)
-
-            # === Recorte de la etapa visible ===
-            mask = t >= t_pre
-            t_visible = t[mask] - t_pre
-            y_visible = y[mask]
-
-            # === Cálculo de error y PWM aplicado ===
-            error_visible = ref2 - y_visible
-            t_pwm, delta_pwm = forced_response(self.C_tf, T=t_visible, U=error_visible)
-
-
-            pwm_eq = self.ctrlsys.pwm_equilibrio()
-            pwm_visible = delta_pwm + pwm_eq
-            pwm_visible = np.clip(pwm_visible, 1000, 2000)  # Saturación
-
-
-            self.sim_data = {
-                "t": t_visible,
-                "y": y_visible,
-                "error": error_visible,
-                "pwm": pwm_visible,
-            }
-
-            self._update_sim_plot_visibility()
-            self.pz_chart.set_poles_zeros(T.poles(), T.zeros())
-
-
-        except Exception as e:
-            print("[ERROR simulación paso]:", e)
+    @Slot(np.ndarray, np.ndarray, np.ndarray, object, object)
+    def _on_step_finished(self, t_vis, y_vis, pwm_vis, poles, zeros):
+        # llenamos sim_data
+        self.sim_data = {
+            "t":     t_vis,
+            "y":     y_vis,
+            "error": self.anguloReferencia - y_vis,
+            "pwm":   pwm_vis
+        }
+        self._update_sim_plot_visibility()
+        self.pz_chart.set_poles_zeros(poles, zeros)
 
             
     def _actualizar_pid_manual(self):
@@ -1038,13 +1166,20 @@ class ControlApp(QMainWindow):
         ki = self.spin_ki.value()
         kd = self.spin_kd.value()
         n  = self.spin_n.value()
-
+        
         print(f"[PID manual] Aplicando Kp={kp}, Ki={ki}, Kd={kd}, N={n}")
         self.C_tf = self.ctrlsys.pidf_tf(kp, ki, kd, n)
+        self.ctrlsys.set_pidf_coefs(kp, ki, kd, n, self._Ts)
+        self.comm.set_pidf(kp, ki, kd, n, self._Ts, self.ctrlsys.pwm_equilibrio())
+
         self._actualizar_constantes_modelo()
+        self._update_reference_lines()
+        
 
     def _on_reference_changed(self, value_deg):
         self.anguloReferencia = np.radians(value_deg)
+        self.comm.set_referencia(value_deg)
+
         print(f"[Referencia] Ángulo de referencia actualizado a {value_deg}°")
 
     def _on_checkbox_toggled(self, checked):
@@ -1053,6 +1188,8 @@ class ControlApp(QMainWindow):
             valor_eq = self.angle_spin.value()
             self.ref_spin.setValue(valor_eq)
             self.anguloReferencia = np.radians(valor_eq)
+            self.comm.set_referencia(valor_eq) 
+
             print(f"[Referencia] Sincronizado con ángulo de equilibrio: {valor_eq}°")
         else:
             self.ref_spin.setEnabled(True)

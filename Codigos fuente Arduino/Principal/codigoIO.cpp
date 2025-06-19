@@ -39,32 +39,29 @@ bool inSubMenu    = false;
 // ----------------------------------------------------------------------
 // Utilidades de LCD
 // ----------------------------------------------------------------------
-static void refrescarAnguloPrincipal()
-{
-    lcd.setCursor(5, 0);        // mejor posición centrada
-    lcd.print("         ");     // limpia bien el área
-    lcd.setCursor(5, 0);
+static void refrescarAnguloPrincipal() {
+    lcd.setCursor(5,0);
+    lcd.print("        ");
+    lcd.setCursor(5,0);
     lcd.print("Ang:");
-    lcd.print(anguloActual_deg, 2);
-    lcd.write(223);             // símbolo de grado
+    lcd.print(anguloActual_deg,2);
+    lcd.write(223);
 }
 
 
 
 
-void showMenu()
-{
+void showMenu() {
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("Menu");
-    lcd.setCursor(0, 1); lcd.print(menuItems[currentIndex]);
+    lcd.setCursor(0,0); lcd.print("Menu");
+    lcd.setCursor(0,1); lcd.print(menuItems[currentIndex]);
     //refrescarAnguloPrincipal();
 }
 
 // ----------------------------------------------------------------------
 // Navegación global  ►  llamar SIEMPRE en loop()
 // ----------------------------------------------------------------------
-void navegarMenu()
-{
+void navegarMenu() {
     static unsigned long tLCD = 0;
     const unsigned long dtLCD = 250;
 
@@ -77,15 +74,10 @@ void navegarMenu()
     }
 
     char key = keypad.getKey();
-
     if (!inSubMenu) {
-        if (key == '8') {
-            currentIndex = (currentIndex + 1) % menuLength;
-            showMenu();
-        } else if (key == '2') {
-            currentIndex = (currentIndex - 1 + menuLength) % menuLength;
-            showMenu();
-        } else if (key == '#') {
+        if (key=='8') { currentIndex=(currentIndex+1)%menuLength; showMenu(); }
+        else if (key=='2') { currentIndex=(currentIndex-1+menuLength)%menuLength; showMenu(); }
+        else if (key=='#') {
             inSubMenu = true;
             lcd.clear();
             switch (currentIndex) {
@@ -95,12 +87,13 @@ void navegarMenu()
                 case 3: toggleControl();          break;
             }
         }
-    } else if (key == '*') {
+    }
+    else if (key=='*') {
         inSubMenu = false;
         showMenu();
     }
 
-    if (key == 'C' || key == 'c') {
+    if ((key=='C'||key=='c')) {
         toggleControl();
         if (inSubMenu) {
             lcd.clear();
@@ -112,7 +105,7 @@ void navegarMenu()
         }
     }
 
-    if (!inSubMenu && millis() - tLCD >= dtLCD) {
+    if (!inSubMenu && millis()-tLCD>=dtLCD) {
         //refrescarAnguloPrincipal();
         tLCD = millis();
     }
@@ -273,9 +266,12 @@ void verDatos()
 
             case 3:
                 lcd.setCursor(0, 1);
-                lcd.print("PWM: ");
+                lcd.print("PWM");
+                if (pwm_recibido_pc) lcd.print("*");  // ← asterisco si vino de la PC
+                lcd.print(": ");
                 lcd.print(pwmAplicado, 0);
                 break;
+
 
             case 4:
                 lcd.setCursor(0, 1);
@@ -338,14 +334,16 @@ void verDatos()
 
 
 // ----------------------------------------------------------------------
-bool toggleControl()
-{
+// Alternar control/manual
+// ----------------------------------------------------------------------
+bool toggleControl() {
     controlActivo = !controlActivo;
-    if (!controlActivo) pwmAplicado = 1000.0f;
+    usePwmPc      = false;          // al tocar aquí, vuelvo a usar PID interno
+    if (!controlActivo) pwmAplicado = 1000;
 
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("Control:");
-    lcd.setCursor(0, 1); lcd.print(controlActivo ? "ENCENDIDO" : "APAGADO");
+    lcd.setCursor(0,0); lcd.print("Control:");
+    lcd.setCursor(0,1); lcd.print(controlActivo ? "ENCENDIDO" : "APAGADO");
     delay(1000);
 
     if (!inSubMenu) showMenu();

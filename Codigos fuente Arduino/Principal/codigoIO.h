@@ -16,8 +16,9 @@ extern byte  colPins[COLS];
 extern LiquidCrystal_I2C lcd;
 extern Keypad keypad;
 extern bool pid_recibido_desde_pc;
-extern bool pid_recibido_desde_pc;
 extern bool tss_mp_recibidos_pc;
+extern bool pwm_recibido_pc;
+extern bool usePwmPc;
 
 
 // --- Variables compartidas con Principal.ino ---

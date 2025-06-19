@@ -84,7 +84,7 @@ end
 legend('Location', 'best');
 
 subplot(1,2,2); hold on; grid on;
-title('Error de control'); xlabel('Tiempo (s)'); ylabel('Error (rad)');
+title('Error de control'); xlabel('Tiempo (s)'); ylabel('Error (°)');
 for i = 1:n_experimentos
     plot(tiempo{i}, error{i}, '-', 'Color', colores(i,:), 'LineWidth', 1.3, 'DisplayName', sprintf('Experimento %d', i));
 end

@@ -20,7 +20,7 @@ void inicializarMotor() {
     motorESC.attach(ESC_PIN);
     motorESC.writeMicroseconds(1000); // Señal mínima
     
-    pinMode(SWITCH_PIN, INPUT_PULLUP);
+    pinMode(SWITCH_PIN, INPUT);
     pinMode(RELAY_PIN, OUTPUT);
 }
 
@@ -29,7 +29,7 @@ bool leerSwitchRebote() {
     int estadoActualSwitch = digitalRead(SWITCH_PIN);
     unsigned long tiempoActual = millis();
     if ((tiempoActual - ultimoTiempoRebote) > retrasoRebote) {
-        if (estadoActualSwitch == LOW && ultimoEstadoSwitch == HIGH) { 
+        if (estadoActualSwitch == HIGH && ultimoEstadoSwitch == LOW) { 
             ultimoEstadoSwitch = estadoActualSwitch;
             ultimoTiempoRebote = tiempoActual;
             return true; 

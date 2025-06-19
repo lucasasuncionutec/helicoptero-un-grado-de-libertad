@@ -6,7 +6,7 @@
 #include <Servo.h>
 
 #define RELAY_PIN 10
-#define SWITCH_PIN 4
+#define SWITCH_PIN 53//antes 4, REVISAR ESTO
 #define ESC_PIN 11
 
 void inicializarMotor();

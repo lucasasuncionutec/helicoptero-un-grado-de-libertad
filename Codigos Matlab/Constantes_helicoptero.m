@@ -11,7 +11,7 @@ Lc = 0.16; % Distancia entre el eje y centro de masa del cable
 Mcp = 0.041; % Masa del contrapeso
 Mc = 0.003808; % Masa  del cable
 Mm = 0.024; % Masa del motor
-Mj = 0.037; % Masa de la jaula con su soporte
+Mj = 0.044; % Masa de la jaula con su soporte
 
 % Cálculos
 

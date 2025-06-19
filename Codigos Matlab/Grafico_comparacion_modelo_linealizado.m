@@ -12,11 +12,11 @@ theta_eq_deg = [0, 15];
 theta_eq_rad = deg2rad(theta_eq_deg);
 
 % ---------- Fuerzas aplicadas absolutas (N) ----------
-F_aplicadas = [-0.3, 0.6];
+F_aplicadas = [0, 0.3];
 
 % ---------- Simulación ----------
 u_step = @(t) double(t >= 0);
-t_span = [0 5];  % segundos
+t_span = [0 3];  % segundos
 
 % ---------- Figura ----------
 nTheta = numel(theta_eq_rad);
@@ -64,7 +64,7 @@ for i = 1:nTheta
             'FontSize', 10, 'Color', [0.1 0.1 0.6], 'FontWeight', 'bold')
         text(0.1, 25+(j-1)*200, sprintf('F_{eq} = %.2f N', F_eq), ...
             'FontSize', 10, 'Color', [0.4 0.1 0.1], 'FontWeight', 'bold')
-
+        
         % === Títulos y etiquetas ===
         if i == 1
             title(sprintf('F_h = %.2f N', F_aplicada))

@@ -50,7 +50,7 @@ r = coeficientes(2);
 
 % === Ajuste automático de offset según PWM de equilibrio real ===
 PWM_eq_real = 1320;
-angulo_equilibrio = 0 * (pi/180);
+angulo_equilibrio = -20 * (pi/180);
 C = -0.1326;
 Lm = 0.3310;
 
